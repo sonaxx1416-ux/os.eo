@@ -1,0 +1,316 @@
+# os.eo — ملفات ومجلدات مع سجل لكل عملية
+#
+#   from os {OsS}
+#   var sys @OsS = OsS()
+#   sys.remove "test.txt"
+#   print sys.log[0]        → [20:01:05] remove test.txt → ok
+#
+# مكتوبة بـ eo، بدون أي تعديل في اللغة.
+
+const VERSION = "1.0.0"
+
+struct OsS {
+    # كل عملية تنكتب هنا كسطر نص
+    log @list
+    # آخر خطأ ("" لو آخر عملية تمام)
+    error @string
+    # true = يطبع كل سطر سجل أول ما يصير
+    echo @bool = false
+    # أقصى عدد سطور في السجل (0 = بدون حد)
+    max_log @int = 0
+}
+
+# ═════════════════════════════════════════════
+#  العمليات
+# ═════════════════════════════════════════════
+
+# sys.exists "a.txt"  → true لو الملف أو المجلد موجود
+func OsS.exists path @string {
+    var yes = file_exists(path)
+    var word = "no"
+    if yes {
+        word = "yes"
+    }
+    self._note(h"exists ${path}", word, "")
+    return yes
+}
+
+# true لو المسار مجلد
+func OsS.isdir path @string {
+    var yes = is_dir(path)
+    var word = "no"
+    if yes {
+        word = "yes"
+    }
+    self._note(h"isdir ${path}", word, "")
+    return yes
+}
+
+# sys.remove "a.txt"  → يحذف ملف (للمجلدات استخدم rmdir)
+func OsS.remove path @string {
+    var what = h"remove ${path}"
+    if not file_exists(path) {
+        return self._bad(what, "the file does not exist")
+    }
+    if is_dir(path) {
+        return self._bad(what, "this is a folder, use rmdir")
+    }
+    if not delete_file(path) {
+        return self._bad(what, "could not delete it (is it open in another program?)")
+    }
+    return self._good(what)
+}
+
+# sys.rmdir "old"           → يحذف المجلد لو فاضي
+# sys.rmdir "old", true     → يحذفه بكل اللي فيه
+func OsS.rmdir path @string, force @bool = false {
+    var what = h"rmdir ${path}"
+    if force {
+        what = what + " (force)"
+    }
+    if not file_exists(path) {
+        return self._bad(what, "the folder does not exist")
+    }
+    if not is_dir(path) {
+        return self._bad(what, "this is a file, use remove")
+    }
+    if not force and len(list_dir(path)) > 0 {
+        return self._bad(what, h"the folder is not empty (${len(list_dir(path))} items), use rmdir(path, true)")
+    }
+    if not delete_tree(path) {
+        return self._bad(what, "could not delete everything (is a file open in another program?)")
+    }
+    return self._good(what)
+}
+
+# sys.copy "a.png", "b.png"
+# sys.copy "a.png", "backup"     → لو backup مجلد، ينسخه داخله
+# sys.copy "photos", "photos2"   → ينسخ المجلد بكل اللي فيه
+func OsS.copy src @string, dst @string {
+    var what = h"copy ${src} → ${dst}"
+    if not file_exists(src) {
+        return self._bad(what, "the source does not exist")
+    }
+    var target = dst
+    if is_dir(dst) {
+        target = path_join(dst, basename(src))
+    }
+    if same_path(src, target) {
+        return self._bad(what, "the source and the target are the same")
+    }
+    if is_dir(src) {
+        if inside(target, src) {
+            return self._bad(what, "can't copy a folder into itself")
+        }
+        if not copy_tree(src, target) {
+            return self._bad(what, "some files could not be copied")
+        }
+    } elif not copy_file(src, target) {
+        return self._bad(what, "could not write " + target)
+    }
+    return self._good(what)
+}
+
+# sys.rename "old.txt", "new.txt"   (يشتغل كنقل بعد: "a.txt", "folder/a.txt")
+func OsS.rename old @string, new @string {
+    var what = h"rename ${old} → ${new}"
+    if not file_exists(old) {
+        return self._bad(what, "the source does not exist")
+    }
+    if same_path(old, new) {
+        return self._good(what)
+    }
+    if file_exists(new) {
+        return self._bad(what, "the target already exists")
+    }
+    if is_dir(old) {
+        if inside(new, old) {
+            return self._bad(what, "can't move a folder into itself")
+        }
+        if not copy_tree(old, new) {
+            return self._bad(what, "some files could not be copied")
+        }
+        if not delete_tree(old) {
+            return self._bad(what, "copied, but the old folder could not be deleted")
+        }
+    } else {
+        if not copy_file(old, new) {
+            return self._bad(what, "could not write " + new)
+        }
+        if not delete_file(old) {
+            return self._bad(what, "copied, but the old file could not be deleted")
+        }
+    }
+    return self._good(what)
+}
+
+# sys.system "dir"
+#   eo ما فيها للحين طريقة تشغّل أوامر، فترجع -1 وتكتب السبب في السجل
+func OsS.system command @string {
+    self._bad(h"system ${command}", "running commands is not supported by this version of eo")
+    return -1
+}
+
+# ═════════════════════════════════════════════
+#  السجل
+# ═════════════════════════════════════════════
+
+# آخر سطر في السجل
+func OsS.last {
+    if len(self.log) == 0 {
+        return ""
+    }
+    return self.log[len(self.log) - 1]
+}
+
+# يطبع السجل كله
+func OsS.show_log {
+    for line in self.log {
+        print line
+    }
+}
+
+# يحفظ السجل في ملف (يضيف على اللي قبل)
+func OsS.save_log path @string {
+    if len(self.log) > 0 {
+        append_file path, join(self.log, "\n") + "\n"
+    }
+}
+
+func OsS.clear_log {
+    self.log = []
+}
+
+func OsS._good what @string {
+    self._note(what, "ok", "")
+    return true
+}
+
+func OsS._bad what @string, why @string {
+    self._note(what, "failed: " + why, why)
+    return false
+}
+
+func OsS._note what @string, result @string, err @string {
+    self.error = err
+    var line = h"[${time_format()}] ${what} → ${result}"
+    append self.log, line
+    if self.max_log > 0 and len(self.log) > self.max_log {
+        self.log = slice(self.log, len(self.log) - self.max_log)
+    }
+    if self.echo {
+        print line
+    }
+}
+
+# ═════════════════════════════════════════════
+#  أدوات المسارات
+# ═════════════════════════════════════════════
+
+# "a\\b/c.txt" → "a/b/c.txt" وبدون / في الآخر
+func clean p @string {
+    var out = replace(p, "\\", "/")
+    while len(out) > 1 and endswith(out, "/") and not endswith(out, ":/") {
+        out = slice(out, 0, len(out) - 1)
+    }
+    return out
+}
+
+func basename p @string {
+    var parts = split(clean(p), "/")
+    return parts[len(parts) - 1]
+}
+
+func dirname p @string {
+    var c = clean(p)
+    var parts = split(c, "/")
+    if len(parts) <= 1 {
+        return "."
+    }
+    var d = join(slice(parts, 0, len(parts) - 1), "/")
+    if d == "" {
+        return "/"
+    }
+    if endswith(d, ":") {
+        return d + "/"
+    }
+    return d
+}
+
+func path_join a @string, b @string {
+    var c = clean(a)
+    if endswith(c, "/") {
+        return c + b
+    }
+    return c + "/" + b
+}
+
+func same_path a @string, b @string {
+    return lower(clean(a)) == lower(clean(b))
+}
+
+# true لو child داخل parent
+func inside child @string, parent @string {
+    return startswith(lower(clean(child)) + "/", lower(clean(parent)) + "/")
+}
+
+func is_dir p @string {
+    var c = clean(p)
+    if c == "." or c == "/" or endswith(c, ":/") {
+        return true
+    }
+    var parent = dirname(c)
+    if not file_exists(parent) {
+        return false
+    }
+    return (basename(c) + "/") in list_dir(parent)
+}
+
+# ═════════════════════════════════════════════
+#  النسخ والحذف
+# ═════════════════════════════════════════════
+
+func copy_file src @string, dst @string {
+    var done = false
+    prc -s 120 {
+        write_file dst, read_file(src)
+        done = true
+    }
+    return done and file_exists(dst)
+}
+
+func make_dir p @string {
+    if file_exists(p) {
+        return
+    }
+    var tmp = path_join(p, ".eo_os_tmp")
+    write_file tmp, ""
+    delete_file(tmp)
+}
+
+func copy_tree src @string, dst @string {
+    make_dir(dst)
+    var all = true
+    for name in list_dir(src) {
+        if endswith(name, "/") {
+            var sub = slice(name, 0, len(name) - 1)
+            if not copy_tree(path_join(src, sub), path_join(dst, sub)) {
+                all = false
+            }
+        } elif not copy_file(path_join(src, name), path_join(dst, name)) {
+            all = false
+        }
+    }
+    return all
+}
+
+func delete_tree p @string {
+    for name in list_dir(p) {
+        if endswith(name, "/") {
+            delete_tree(path_join(p, slice(name, 0, len(name) - 1)))
+        } else {
+            delete_file(path_join(p, name))
+        }
+    }
+    return delete_file(p) or not file_exists(p)
+}

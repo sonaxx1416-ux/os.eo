@@ -1,0 +1,19 @@
+from os {OsS}
+
+var sys @OsS = OsS()
+
+write_file "test.txt", "hello"
+sys.copy "test.txt", "backup/test.txt"
+sys.rename "test.txt", "new.txt"
+sys.remove "new.txt"
+if not sys.remove("new.txt") {   # المرة الثانية بتفشل وتنكتب في السجل
+    print "ما انحذف: " + sys.error
+}
+
+if sys.exists("backup") {
+    sys.rmdir "backup", true
+}
+
+print sys.log[0]
+print "------"
+sys.show_log
